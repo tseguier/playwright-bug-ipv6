@@ -11,10 +11,80 @@ concurrency:
 jobs:
 
   tests:
-    runs-on: demao
+    runs-on: ubuntu-latest
     steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Setup Node.js environment
         uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: npx playwright install chromium --with-deps
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          version: 11.3.0
+          cache: false
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: bash
+        run: CI=true pnpm install --frozen-lockfile
+
+      - run: npx envinfo --preset playwright
+      - name: Reproduire l'état réseau du self-hosted (IPv6 cassée + pas de fallback IPv4)
+        run: |
+          IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
+          echo "Interface par défaut : $IFACE"
+          # Reproduction de microsoft/playwright#40041 :
+          # Sur le runner self-hosted, le CDN Playwright résout en IPv6, mais l'IPv6
+          # n'est pas routable → connect() échoue avec EADDRNOTAVAIL (Local :::0).
+          # Le downloader de Playwright (>=1.56) itère sur TOUTES les AAAA du CDN sans
+          # jamais retomber sur l'IPv4, donc l'install meurt.
+          #
+          # Sur un runner hosted, deux choses diffèrent et masquent le bug :
+          #   1. aucune adresse/route IPv6 globale → Node ne tente même pas l'IPv6,
+          #   2. l'IPv4 vers le CDN marche → Playwright a un fallback.
+          # On recrée donc l'état exact :
+          #   a. IPv6 "présente mais cassée" : adresse globale + route non routables,
+          #   b. on force le CDN à ne résoudre QU'EN IPv6 via /etc/hosts → plus de
+          #      chemin IPv4, comme sur le self-hosted.
+
+          echo "::group::Résolution réelle du CDN (pour récupérer ses AAAA)"
+          getent ahosts cdn.playwright.dev || true
+          echo "::endgroup::"
+
+          # a. IPv6 globale + route, non routables (RFC 3849, plage de documentation)
+          sudo ip -6 addr add 2001:db8::1/64 dev "$IFACE" || true
+          sudo ip -6 route add default via 2001:db8::2 dev "$IFACE" metric 1 || true
+
+          # b. Épingler le CDN sur ses adresses IPv6 uniquement dans /etc/hosts.
+          #    On récupère les AAAA réelles puis on les écrit en dur → le resolver ne
+          #    renverra plus jamais d'A IPv4 pour ce host.
+          for HOST in cdn.playwright.dev playwright.download.prss.microsoft.com; do
+            AAAA=$(getent ahostsv6 "$HOST" | awk '{print $1}' | sort -u | head -n1)
+            if [ -n "$AAAA" ]; then
+              echo "$AAAA $HOST" | sudo tee -a /etc/hosts
+            fi
+          done
+
+          echo "::group::État après"
+          ip -6 addr show dev "$IFACE" || true
+          ip -6 route show || true
+          echo "--- /etc/hosts (entrées CDN) ---"
+          grep -E "playwright|microsoft" /etc/hosts || true
+          echo "--- résolution finale du CDN ---"
+          getent ahosts cdn.playwright.dev || true
+          echo "::endgroup::"
+      - name: Diagnostic - connexion brute IPv6 vers le CDN
+        continue-on-error: true
+        run: |
+          node -e '
+            const net = require("net");
+            const s = net.connect({ host: "cdn.playwright.dev", port: 443 });
+            s.on("connect", () => { console.log("CONNECTED (pas de repro)"); s.destroy(); });
+            s.on("error", (e) => { console.log("ERREUR:", e.code, e.syscall, e.address, "Local", e.localAddress ?? "(:::0)"); process.exit(0); });
+          '
+      - name: Playwright install (doit échouer comme sur le self-hosted)
+        run: npx playwright install chromium --with-deps
