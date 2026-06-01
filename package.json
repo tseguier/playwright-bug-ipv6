@@ -1,0 +1,46 @@
+{
+  "name": "@siaapfr/frontend",
+  "version": "0.2.0",
+  "type": "module",
+  "dependencies": {
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  },
+  "scripts": {
+    "analyze": "source-map-explorer 'build/static/js/*.js'",
+    "dev": "VITE_AUTH_MODE=fake vite",
+    "dev:real": "VITE_AUTH_MODE=real vite",
+    "build": "tsc && vite build",
+    "build:clean": "rimraf dist coverage playwright-report test-results build.log",
+    "start": "vite preview",
+    "test": "vitest run",
+    "test:ci": "export CI=true && vitest run --coverage && E2E_COVERAGE=true pnpm test:e2e",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
+    "test:e2e": "AUTH_MODE=fake playwright test",
+    "test:e2e:open": "AUTH_MODE=fake playwright test --ui --headed",
+    "test:e2e:debug": "AUTH_MODE=fake playwright test --ui --headed --debug",
+    "test:e2e:real": "E2E_TIMEOUT=240000 AUTH_MODE=real playwright test",
+    "test:e2e:real:open": "E2E_TIMEOUT=240000 AUTH_MODE=real playwright test --ui --headed",
+    "test:e2e:real:debug": "E2E_TIMEOUT=240000 AUTH_MODE=real playwright test --ui --headed --debug",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
+  },
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=24"
+  }
+}
